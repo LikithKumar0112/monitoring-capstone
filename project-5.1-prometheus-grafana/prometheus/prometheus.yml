@@ -1,0 +1,31 @@
+# Project 5.1 — Prometheus configuration
+# Task 1: basic global parameters.  Task 2: Node Exporter (+ cAdvisor) as scrape targets.
+
+global:
+  scrape_interval: 15s          # how often to scrape targets
+  evaluation_interval: 15s      # how often to evaluate alerting/recording rules
+  external_labels:
+    monitor: capstone-5-1
+
+# Stretch goal: load alerting rules (high CPU usage).
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Prometheus scraping itself — a good "is my server alive" target.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Task 2 — host metrics from Node Exporter.
+  # Service name `node-exporter` resolves via Docker's internal DNS.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          instance: capstone-host
+
+  # Stretch goal — container metrics from cAdvisor.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

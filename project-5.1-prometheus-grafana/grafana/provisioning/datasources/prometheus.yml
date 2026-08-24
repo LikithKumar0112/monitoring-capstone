@@ -1,0 +1,14 @@
+# Task 4 — auto-provision Prometheus as a Grafana data source (no manual clicking).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus            # fixed uid so provisioned dashboards can reference it
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s      # matches Prometheus scrape_interval for accurate rate() steps

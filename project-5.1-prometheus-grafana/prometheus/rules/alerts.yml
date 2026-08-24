@@ -1,0 +1,17 @@
+# Project 5.1 — Stretch goal: alerting rule for high CPU usage.
+# In 5.1 there is no Alertmanager yet, so this alert simply shows up on the
+# Prometheus /alerts page (PENDING -> FIRING). Project 5.3 wires alerts to Slack.
+
+groups:
+  - name: host-alerts
+    rules:
+      # Fire when the host's average CPU utilisation exceeds 80% for 2 minutes.
+      # 100 - idle% = busy%.  irate over 5m smooths short spikes.
+      - alert: HighCpuUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU is above 80% (current value: {{ printf \"%.1f\" $value }}%) for over 2 minutes."

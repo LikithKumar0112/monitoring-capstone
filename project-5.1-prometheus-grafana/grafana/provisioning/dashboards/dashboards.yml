@@ -1,0 +1,15 @@
+# Task 5 — tell Grafana to load any dashboard JSON found in /var/lib/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: capstone-dashboards
+    orgId: 1
+    folder: "Monitoring 5.1"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
