@@ -1,0 +1,7 @@
+# Secrets and local-only files — never commit these.
+.env
+*.pem
+logs/
+
+# Local-only compose overrides used on the dev box (port remaps, WSL mount fixes).
+docker-compose.override.yml

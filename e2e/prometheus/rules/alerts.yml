@@ -1,0 +1,23 @@
+# e2e — Alerting rules.
+groups:
+  - name: availability
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} ({{ $labels.job }}) is down"
+          description: "Target {{ $labels.instance }} of job {{ $labels.job }} has been unreachable (up == 0) for more than 1 minute."
+
+  - name: app-health
+    rules:
+      - alert: HighErrorRate
+        expr: job:flaky_app_requests:error_ratio > 0.10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate for job {{ $labels.job }}"
+          description: "{{ $labels.job }} is serving {{ $value | humanizePercentage }} 5xx responses (threshold 10%) for over 2 minutes."

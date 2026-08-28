@@ -1,0 +1,21 @@
+# e2e — Recording rules (naming: level:metric:operation).
+groups:
+  - name: recording-host
+    rules:
+      # Host CPU busy percent = 100 - idle%.
+      - record: instance:node_cpu:busy_percent
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+      # Host memory used percent — used by the host dashboard's "memory used %" panel.
+      - record: instance:node_memory:used_percent
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+
+  - name: recording-app
+    rules:
+      # Flaky app 5xx error ratio — the HighErrorRate alert and golden-signals
+      # dashboard both read this single series.
+      - record: job:flaky_app_requests:error_ratio
+        expr: |
+          sum by (job) (rate(app_requests_total{code=~"5.."}[5m]))
+          /
+          sum by (job) (rate(app_requests_total[5m]))

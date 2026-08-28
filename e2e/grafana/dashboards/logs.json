@@ -1,0 +1,51 @@
+{
+  "uid": "app-logs",
+  "title": "Application Logs (Elasticsearch)",
+  "tags": ["e2e", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "app-logs-* (latest lines)",
+      "datasource": { "type": "elasticsearch", "uid": "elasticsearch" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "elasticsearch", "uid": "elasticsearch" },
+          "query": "*", "metrics": [ { "id": "1", "type": "logs" } ], "timeField": "@timestamp" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Log volume by level",
+      "datasource": { "type": "elasticsearch", "uid": "elasticsearch" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "elasticsearch", "uid": "elasticsearch" },
+          "query": "*",
+          "timeField": "@timestamp",
+          "metrics": [ { "id": "1", "type": "count" } ],
+          "bucketAggs": [
+            { "id": "3", "type": "terms", "field": "log_level.keyword", "settings": { "size": "5" } },
+            { "id": "2", "type": "date_histogram", "field": "@timestamp", "settings": { "interval": "auto" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

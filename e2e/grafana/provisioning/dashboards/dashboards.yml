@@ -1,0 +1,14 @@
+# e2e — load every dashboard JSON on disk; nothing is clicked through the UI.
+apiVersion: 1
+
+providers:
+  - name: e2e-dashboards
+    orgId: 1
+    folder: "Observability e2e"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

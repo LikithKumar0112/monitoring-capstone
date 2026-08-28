@@ -1,0 +1,25 @@
+# Project 5.4 — Federation master.
+# CONTRAST ONLY: this is the *classic* scaling approach (hierarchical
+# federation) shown here to compare against Thanos. It is NOT part of the Thanos
+# data path. Thanos gets the leaves' data from object storage via the sidecars;
+# this master instead pulls a curated subset of series from each leaf's
+# /federate endpoint. Federation duplicates data and does not scale to many
+# leaves — that is exactly the limitation Thanos removes.
+global:
+  scrape_interval: 15s
+  external_labels:
+    role: federation-master
+
+scrape_configs:
+  - job_name: federate
+    honor_labels: true          # keep the leaf's original labels, don't overwrite
+    metrics_path: /federate
+    params:
+      # Only pull the series named here — never federate everything (cardinality).
+      "match[]":
+        - '{job="prometheus"}'
+        - '{job="node-exporter"}'
+    static_configs:
+      - targets:
+          - "prometheus-us:9090"
+          - "prometheus-eu:9090"

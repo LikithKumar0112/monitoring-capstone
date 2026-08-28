@@ -1,0 +1,22 @@
+# e2e — Leaf Prometheus "US" (scaling profile).
+# Identical to prometheus-eu except external_labels. These labels are stamped
+# onto every series this Prometheus produces and are what let Thanos tell one
+# leaf's data from another's (region) and deduplicate replicas (replica).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    region: us-east
+    replica: A          # single replica per region here; Thanos dedups on this
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrapes the shared node-exporter from the metrics profile (present under `all`).
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          instance: us-host

@@ -1,0 +1,19 @@
+# Project 5.4 — Leaf Prometheus for the "EU" region.
+# Identical to prometheus-us except external_labels (region: eu-west).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    region: eu-west
+    replica: A
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter-eu:9100"]
+        labels:
+          instance: eu-host

@@ -4,3 +4,6 @@
 # Runtime / data volumes if ever bind-mounted
 **/data/
 **/.DS_Store
+
+# Local-only compose overrides for the dev box
+**/docker-compose.override.yml

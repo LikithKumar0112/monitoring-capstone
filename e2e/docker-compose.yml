@@ -1,0 +1,497 @@
+# =============================================================================
+# e2e — Unified observability platform: metrics + logs + alerting + tracing +
+# Thanos scaling, all in one Compose project, gated by profiles.
+#
+# Target host: m7i-flex.large (2 vCPU / 8 GB). mem_limit is set on every
+# long-running service and JVM heaps are capped so one runaway container can't
+# take the box down.
+#
+# Approx per-container mem_limit budget for the `all` profile (MB):
+#   metrics : prometheus 400 + node-exporter 96 + cadvisor 256 + grafana 320       = 1072
+#   alerting: alertmanager 96 + flaky-app 64                                        =  160
+#   tracing : jaeger 400 + hotrod 128                                               =  528
+#   logging : elasticsearch 1536 + logstash 768 + kibana 768 + filebeat 128
+#             + log-generator 64                                                    = 3264
+#   scaling : minio 384 + prom-us 320 + prom-eu 320 + prom-fed 320
+#             + sidecar-us 192 + sidecar-eu 192 + store 384 + compact 320 + query 320 = 2752
+#   TOTAL ~ 7776 MB (~7.6 GB) -> fits 8 GB with the OS, but tight. Prefer running
+#   profile subsets (see README RAM table) unless you actually need everything.
+#
+# Profiles: metrics | logging | alerting | tracing | scaling | all
+# Every service is tagged `all` plus its own profile(s). `alerting` builds on
+# `metrics` (bring both up together — the Makefile does this).
+# =============================================================================
+name: e2e
+
+services:
+  # =================== METRICS ===================
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: e2e-prometheus
+    profiles: ["metrics", "alerting", "all"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    mem_limit: 400m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: e2e-node-exporter
+    profiles: ["metrics", "alerting", "scaling", "all"]
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    mem_limit: 96m
+    # No healthcheck: the node-exporter image is FROM scratch (no shell/tools).
+    # Liveness is covered by Prometheus's up{job="node-exporter"} + restart policy.
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: e2e-cadvisor
+    profiles: ["metrics", "alerting", "all"]
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"      # NOTE: HotROD moved off 8080 to 8081 to avoid this clash
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: e2e-grafana
+    profiles: ["metrics", "alerting", "all"]   # single Grafana for the whole platform
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # =================== ALERTING ===================
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: e2e-alertmanager
+    profiles: ["alerting", "all"]
+    restart: unless-stopped
+    environment:
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    # Alertmanager can't read ${ENV} from its config, so substitute the webhook
+    # into a runtime copy (image ships /bin/sh + sed) before starting.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed "s|SLACK_WEBHOOK_URL_PLACEHOLDER|${SLACK_WEBHOOK_URL:-}|" \
+          /etc/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
+        exec /bin/alertmanager \
+          --config.file=/tmp/alertmanager.yml \
+          --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    mem_limit: 96m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  flaky-app:
+    build: ./flaky-app
+    image: capstone/flaky-app:e2e
+    container_name: e2e-flaky-app
+    profiles: ["alerting", "all"]
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/metrics')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # =================== TRACING ===================
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: e2e-jaeger
+    profiles: ["tracing", "all"]
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14269:14269"   # Jaeger's own Prometheus metrics
+    mem_limit: 400m
+
+  hotrod:
+    image: jaegertracing/example-hotrod:1.57
+    container_name: e2e-hotrod
+    profiles: ["tracing", "all"]
+    restart: unless-stopped
+    command: ["all"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    ports:
+      - "8081:8080"     # moved off 8080 (cAdvisor owns 8080)
+    mem_limit: 128m
+    depends_on:
+      - jaeger
+
+  # =================== LOGGING (ELK) ===================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: e2e-elasticsearch
+    profiles: ["logging", "all"]
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false      # single-box demo; enabling it is the stretch goal
+      # Heap capped well below mem_limit (rest is Lucene/off-heap). ~50% rule.
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      # Referenced from .env per project requirement; only used once security is on.
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    mem_limit: 1536m
+    healthcheck:
+      # ES image has bash; check the HTTP port is accepting connections.
+      test: ["CMD-SHELL", "bash -c 'echo -n > /dev/tcp/localhost/9200'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.15.3
+    container_name: e2e-logstash
+    profiles: ["logging", "all"]
+    restart: unless-stopped
+    environment:
+      - LS_JAVA_OPTS=-Xms384m -Xmx384m
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+    # Beats input (5044) is container-network only — deliberately NOT published.
+    mem_limit: 768m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy      # don't start until ES accepts connections
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo -n > /dev/tcp/localhost/9600'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    container_name: e2e-kibana
+    profiles: ["logging", "all"]
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    mem_limit: 768m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy      # Kibana needs ES up before it boots
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo -n > /dev/tcp/localhost/5601'"]
+      interval: 20s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  log-generator:
+    build: ./log-generator
+    image: capstone/log-generator:e2e
+    container_name: e2e-log-generator
+    profiles: ["logging", "all"]
+    restart: unless-stopped
+    volumes:
+      - logs:/logs
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "test", "-s", "/logs/app.log"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.3
+    container_name: e2e-filebeat
+    profiles: ["logging", "all"]
+    restart: unless-stopped
+    user: root
+    command: ["-e", "--strict.perms=false"]   # skip config-file owner check on bind mount
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - logs:/logs:ro
+    mem_limit: 128m
+    depends_on:
+      logstash:
+        condition: service_healthy
+      log-generator:
+        condition: service_started
+
+  # =================== SCALING (Thanos) ===================
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    container_name: e2e-minio
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the bucket AND generate the real objstore.yml (with creds
+  # from env) into the shared thanos_config volume, so no secret is committed.
+  minio-init:
+    image: minio/mc:RELEASE.2024-09-16T17-43-14Z
+    container_name: e2e-minio-init
+    profiles: ["scaling", "all"]
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - thanos_config:/etc/thanos
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/thanos &&
+        printf 'type: S3\nconfig:\n  bucket: thanos\n  endpoint: minio:9000\n  access_key: %s\n  secret_key: %s\n  insecure: true\n' \
+          "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" > /etc/thanos/objstore.yml &&
+        echo "bucket ready + objstore.yml generated"
+
+  prometheus-us:
+    image: prom/prometheus:v2.54.1
+    container_name: e2e-prometheus-us
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    # min==max block duration disables LOCAL compaction so the sidecar owns block
+    # upload and Thanos Compact owns global compaction. If Prometheus compacted
+    # locally it would rewrite already-uploaded blocks -> overlapping blocks in
+    # the bucket -> Thanos Compact HALTS. Same reason on prometheus-eu.
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --storage.tsdb.retention.time=6h
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus-us/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_us_data:/prometheus
+    mem_limit: 320m
+
+  prometheus-eu:
+    image: prom/prometheus:v2.54.1
+    container_name: e2e-prometheus-eu
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.min-block-duration=2h    # disable local compaction (see prometheus-us)
+      - --storage.tsdb.max-block-duration=2h
+      - --storage.tsdb.retention.time=6h
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus-eu/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_eu_data:/prometheus
+    mem_limit: 320m
+
+  # Federation master — CONTRAST ONLY, not part of the Thanos path (see its config).
+  prometheus-fed:
+    image: prom/prometheus:v2.54.1
+    container_name: e2e-prometheus-fed
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./prometheus-fed/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_fed_data:/prometheus
+    ports:
+      - "9091:9090"
+    mem_limit: 320m
+
+  thanos-sidecar-us:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: e2e-thanos-sidecar-us
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-us:9090
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - prometheus_us_data:/prometheus:ro
+      - thanos_config:/etc/thanos:ro
+    mem_limit: 192m
+
+  thanos-sidecar-eu:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: e2e-thanos-sidecar-eu
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-eu:9090
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - prometheus_eu_data:/prometheus:ro
+      - thanos_config:/etc/thanos:ro
+    mem_limit: 192m
+
+  thanos-store:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: e2e-thanos-store
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    # Named volume is root-owned but the image runs as nobody; run as root so it
+    # can mkdir its data-dir. Alternative: an init container that chowns it.
+    user: "0:0"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      - store
+      - --data-dir=/var/thanos/store
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - thanos_store_data:/var/thanos/store
+      - thanos_config:/etc/thanos:ro
+    mem_limit: 384m
+
+  thanos-compact:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: e2e-thanos-compact
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    user: "0:0"      # same root-owned-volume reason as thanos-store
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      - compact
+      - --data-dir=/var/thanos/compact
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --http-address=0.0.0.0:10902
+      - --wait
+    volumes:
+      - thanos_compact_data:/var/thanos/compact
+      - thanos_config:/etc/thanos:ro
+    mem_limit: 320m
+
+  thanos-query:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: e2e-thanos-query
+    profiles: ["scaling", "all"]
+    restart: unless-stopped
+    depends_on:
+      - thanos-sidecar-us
+      - thanos-sidecar-eu
+      - thanos-store
+    command:
+      - query
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --query.replica-label=replica
+      - --endpoint=thanos-sidecar-us:10901
+      - --endpoint=thanos-sidecar-eu:10901
+      - --endpoint=thanos-store:10901
+    ports:
+      - "10902:10902"
+    mem_limit: 320m
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  es_data:
+  minio_data:
+  logs:
+  thanos_config:
+  prometheus_us_data:
+  prometheus_eu_data:
+  prometheus_fed_data:
+  thanos_store_data:
+  thanos_compact_data:

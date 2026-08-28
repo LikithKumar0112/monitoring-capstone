@@ -1,0 +1,35 @@
+# e2e — one Grafana, three data sources, all auto-provisioned (no UI clicking).
+# Fixed uids so the provisioned dashboards can reference them by uid.
+apiVersion: 1
+
+datasources:
+  # Central Prometheus — live metrics for host/container/app dashboards.
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  # Thanos Query — same API as Prometheus, but global/long-term (scaling profile).
+  - name: Thanos
+    uid: thanos
+    type: prometheus
+    access: proxy
+    url: http://thanos-query:10902
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  # Elasticsearch — the parsed application logs (logging profile).
+  - name: Elasticsearch
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      index: "app-logs-*"
+      timeField: "@timestamp"

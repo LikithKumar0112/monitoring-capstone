@@ -1,0 +1,12 @@
+# e2e — Thanos object storage config: REFERENCE/TEMPLATE ONLY.
+# The compose file does NOT mount this file. Instead minio-init generates the
+# real objstore.yml into a shared volume at startup, filling access_key/secret_key
+# from ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD} in .env — so the actual MinIO
+# credentials never live in a tracked file. This copy documents the shape only.
+type: S3
+config:
+  bucket: thanos
+  endpoint: minio:9000
+  access_key: <MINIO_ROOT_USER>
+  secret_key: <MINIO_ROOT_PASSWORD>
+  insecure: true      # MinIO runs plain HTTP on the internal Docker network
