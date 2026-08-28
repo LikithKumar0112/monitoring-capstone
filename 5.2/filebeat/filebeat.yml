@@ -1,0 +1,12 @@
+# Project 5.2 — Filebeat: tail the generated log file, ship lines to Logstash.
+filebeat.inputs:
+  - type: filestream
+    id: app-logs
+    paths:
+      - /logs/app.log          # shared volume written by the log-generator
+
+# Ship to Logstash (not directly to ES) so Logstash can grok/parse first.
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info
