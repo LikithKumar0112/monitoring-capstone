@@ -1,7 +1,3 @@
-# e2e — convenience targets. Profiles are additive; alerting/scaling pull in the
-# metrics profile because they build on it (Prometheus, node-exporter, Grafana).
-# Usage: make up-metrics | up-all | verify | down | nuke ...
-
 COMPOSE = docker compose
 
 .PHONY: up-metrics up-logging up-alerting up-tracing up-scaling up-all down nuke ps logs verify
@@ -27,7 +23,6 @@ up-all:
 down:
 	$(COMPOSE) --profile all down
 
-# Full reset: stop everything and delete this project's volumes.
 nuke:
 	$(COMPOSE) --profile all down -v
 
