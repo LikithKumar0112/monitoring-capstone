@@ -1,10 +1,3 @@
-# e2e — Alertmanager configuration.
-# SECRET HANDLING: Alertmanager does not expand ${ENV} in its own config, so we
-# commit a placeholder and the compose file substitutes ${SLACK_WEBHOOK_URL}
-# into a /tmp copy at container start (sed). Chosen over slack_api_url_file
-# because it needs no extra mounted secret file — the webhook lives only in
-# .env and in the container's memory, never in a tracked file.
-
 global:
   resolve_timeout: 5m
   slack_api_url: SLACK_WEBHOOK_URL_PLACEHOLDER   # replaced at startup from env
@@ -26,7 +19,6 @@ receivers:
           {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* {{ .Annotations.description }}
           {{ end }}
 
-# A firing critical for an instance suppresses warnings for that same instance.
 inhibit_rules:
   - source_matchers: ['severity="critical"']
     target_matchers: ['severity="warning"']
