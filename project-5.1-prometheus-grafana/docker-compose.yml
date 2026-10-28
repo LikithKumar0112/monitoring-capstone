@@ -41,7 +41,9 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
     restart: unless-stopped
-    privileged: true
+    # Least privilege: no `privileged: true`. cAdvisor needs only the /dev/kmsg
+    # device plus the read-only host mounts below. If your host/kernel requires
+    # more, add `cap_add: [SYS_ADMIN]` rather than full privileged mode.
     devices:
       - /dev/kmsg
     volumes:

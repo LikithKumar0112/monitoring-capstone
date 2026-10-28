@@ -1,0 +1,25 @@
+# Project 5.2 — Elasticsearch security OVERLAY (stretch goal).
+#
+# The base stack runs with security OFF so it works out of the box. To turn on
+# authenticated access, enable security AND layer this file:
+#
+#   cp .env.example .env            # set ELASTIC_PASSWORD + KIBANA_PASSWORD
+#   export ES_SECURITY_ENABLED=true
+#   docker compose -f docker-compose.yml -f docker-compose.security.yml up -d
+#
+# Kibana talks to Elasticsearch directly, so it needs the kibana_system user.
+# Logstash's Elasticsearch output authenticates with ELASTIC_PASSWORD (already
+# wired in logstash/pipeline/logstash.conf). Filebeat ships to Logstash, not ES,
+# so it needs no ES credentials. For production, also enable TLS between nodes.
+
+services:
+  kibana:
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-change_me_kibana}
+
+  logstash:
+    environment:
+      - LS_JAVA_OPTS=-Xms512m -Xmx512m
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-change_me_elastic}
