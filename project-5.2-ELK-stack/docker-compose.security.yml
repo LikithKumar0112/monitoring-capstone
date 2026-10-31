@@ -8,18 +8,46 @@
 #   docker compose -f docker-compose.yml -f docker-compose.security.yml up -d
 #
 # Kibana talks to Elasticsearch directly, so it needs the kibana_system user.
+# Its password is not set by default, so the one-shot `es-setup` service sets it
+# from KIBANA_PASSWORD (authenticating as `elastic`) before Kibana starts.
 # Logstash's Elasticsearch output authenticates with ELASTIC_PASSWORD (already
 # wired in logstash/pipeline/logstash.conf). Filebeat ships to Logstash, not ES,
 # so it needs no ES credentials. For production, also enable TLS between nodes.
 
 services:
+  es-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: es-setup
+    restart: "no"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set ELASTIC_PASSWORD in .env}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD:?set KIBANA_PASSWORD in .env}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        until curl -s -o /dev/null -w '%{http_code}' -u "elastic:$$ELASTIC_PASSWORD" http://elasticsearch:9200/_security/_authenticate | grep -q 200; do
+          echo "waiting for elasticsearch security..."; sleep 5
+        done
+        curl -sf -u "elastic:$$ELASTIC_PASSWORD" -H 'Content-Type: application/json' \
+          -X POST http://elasticsearch:9200/_security/user/kibana_system/_password \
+          -d "{\"password\":\"$$KIBANA_PASSWORD\"}" && echo "kibana_system password set"
+
   kibana:
+    depends_on:
+      es-setup:
+        condition: service_completed_successfully
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-change_me_kibana}
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:?set KIBANA_PASSWORD in .env}
 
   logstash:
     environment:
       - LS_JAVA_OPTS=-Xms512m -Xmx512m
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-change_me_elastic}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set ELASTIC_PASSWORD in .env}
+      # Built-in X-Pack monitoring would poll ES without credentials (401 spam).
+      - XPACK_MONITORING_ENABLED=false
