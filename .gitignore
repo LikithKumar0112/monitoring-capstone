@@ -7,3 +7,4 @@
 
 # Local-only compose overrides for the dev box
 **/docker-compose.override.yml
+**/project-5.4-scaling-monitoring/Likith_Advanced_Monitoring_Logging_Alerting_and_Distributed_Tracing_Assignment_Feedback.pdf
