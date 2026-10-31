@@ -15,8 +15,11 @@ groups:
     rules:
       # 5xx error ratio for the demo app: 5xx rate / total rate.
       # HighErrorRate alerts off this so the alert expr stays a simple comparison.
+      # Keep `instance` so the resulting alert carries it: Alertmanager's
+      # inhibit rule matches on `equal: [instance]`, and an alert without that
+      # label could never be inhibited by a critical alert for the same target.
       - record: job:flaky_app_requests:error_ratio
         expr: |
-          sum by (job) (rate(app_requests_total{code=~"5.."}[5m]))
+          sum by (job, instance) (rate(app_requests_total{code=~"5.."}[5m]))
           /
-          sum by (job) (rate(app_requests_total[5m]))
+          sum by (job, instance) (rate(app_requests_total[5m]))
