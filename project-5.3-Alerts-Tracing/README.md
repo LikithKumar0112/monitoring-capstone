@@ -56,6 +56,25 @@ Supporting — `HighErrorRate` actually **FIRING**:
 **Beyond the Basics** — Jaeger's own metrics scraped by Prometheus (`jaeger:14269` target UP):
 ![targets](../screenshots/5.3-prometheus-targets.png)
 
+**Beyond the Basics** — Alertmanager **inhibition, demonstrated** (not just configured).
+`scripts/inhibition-test.sh` waits for the real `HighErrorRate` (warning, `instance=flaky-app:8000`)
+from Prometheus, injects a **critical** alert for the same instance plus a **control** warning for a
+different instance, and checks the result through the Alertmanager API:
+
+```
+STATE       ALERTNAME                SEVERITY  INSTANCE         INHIBITED BY
+active      InhibitionTestControl    warning   other-host:9999  -
+active      InhibitionTestCritical   critical  flaky-app:8000   -
+suppressed  HighErrorRate            warning   flaky-app:8000   b2ed4d9c314e
+PASS
+```
+
+Run it ~3 min after `docker compose up` (`./scripts/inhibition-test.sh`; `status` / `cleanup` also
+available). The test alerts expire on their own after `TEST_MINUTES` (default 10).
+This needed one rule fix: the error-ratio recording rule now aggregates `by (job, instance)`.
+Before, it was `by (job)`, which dropped `instance`, so `equal: [instance]` could never match
+`HighErrorRate` with a real critical alert.
+
 ## Notes
 
 - Pinned tags (Prometheus `v2.54.1`, Alertmanager `v0.27.0`, Jaeger `1.57`).

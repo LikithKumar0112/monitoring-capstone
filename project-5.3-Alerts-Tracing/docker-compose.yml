@@ -36,7 +36,15 @@ services:
       - /bin/sh
       - -c
       - |
-        sed "s|SLACK_WEBHOOK_URL_PLACEHOLDER|${SLACK_WEBHOOK_URL:-}|" \
+        URL="$${SLACK_WEBHOOK_URL:-}"
+        # Alertmanager refuses to start with an empty Slack URL. With no webhook,
+        # point Slack at an unreachable local URL so routing/grouping/inhibition
+        # still work and are visible in the UI; only delivery fails (logged).
+        if [ -z "$$URL" ]; then
+          echo "WARNING: SLACK_WEBHOOK_URL is empty - Slack delivery disabled"
+          URL="http://127.0.0.1:1/slack-disabled"
+        fi
+        sed "s|SLACK_WEBHOOK_URL_PLACEHOLDER|$$URL|" \
           /etc/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
         exec /bin/alertmanager \
           --config.file=/tmp/alertmanager.yml \

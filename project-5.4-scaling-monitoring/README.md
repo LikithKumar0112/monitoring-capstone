@@ -30,14 +30,15 @@ project-5.4-scaling-monitoring/
 ├── prometheus-us/prometheus.yml       # external_labels {region: us-east, replica: A}
 ├── prometheus-eu/prometheus.yml       # external_labels {region: eu-west, replica: A}
 ├── prometheus-fed/prometheus.yml      # scrapes /federate on both leaves (contrast only)
-├── thanos/objstore.yml                # S3 config pointing at MinIO
+├── thanos/objstore.yml.example        # shape only; real file is generated at runtime from .env
 └── grafana/provisioning/datasources/thanos.yml   # Grafana → Thanos Query
 ```
 
 ## Run
 
 ```bash
-docker compose up -d
+cp ../.env.example .env      # set MINIO_ROOT_USER / MINIO_ROOT_PASSWORD / GRAFANA_ADMIN_PASSWORD
+docker compose up -d         # refuses to start if the MinIO creds are missing
 sleep 30
 docker compose ps            # thanos-store & thanos-compact must be "running", not restarting
 ```
@@ -66,5 +67,9 @@ docker compose ps            # thanos-store & thanos-compact must be "running", 
   as `nobody` (otherwise `mkdir data-dir: permission denied`).
 - **`external_labels`** (`region`, `replica`) are what let Thanos distinguish leaves and dedup HA
   replicas (`--query.replica-label=replica`).
-- Pinned tags (Thanos `v0.36.1`, MinIO `RELEASE.2024-09-13T20-26-02Z`). MinIO dev creds are inline
-  here; the e2e stack generates `objstore.yml` from `.env` at runtime instead.
+- Pinned tags (Thanos `v0.36.1`, MinIO `bitnamilegacy/minio:2024.9.13`; the upstream `minio/minio`
+  and `minio/mc` images are no longer publicly pullable). No credentials are committed: MinIO reads
+  `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from `.env` (compose fails fast if unset), and `minio-init`
+  writes `objstore.yml` from the same values into the shared `thanos_config` volume at runtime.
+- `insecure: true` in `objstore.yml` means plain HTTP to MinIO on the internal Docker network only
+  (MinIO's ports are for the lab console). Production would put TLS in front of the object store.

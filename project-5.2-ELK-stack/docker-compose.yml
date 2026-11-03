@@ -11,7 +11,11 @@ services:
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false        # demo only; enabling it is the stretch goal
+      # Toggle security with one env var. Default off keeps the demo working out
+      # of the box; set ES_SECURITY_ENABLED=true AND layer the security overlay
+      # to turn on authenticated access (see docker-compose.security.yml).
+      - xpack.security.enabled=${ES_SECURITY_ENABLED:-false}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
       # Heap capped at ~50% of mem_limit; the rest is Lucene/off-heap.
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
     volumes:
